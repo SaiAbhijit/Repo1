@@ -7,11 +7,12 @@ from fpdf import FPDF
 
 app = FastAPI()
 
+# Middleware for CORS to allow cross-origin requests
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],  # Allow all origins (cross-origin requests)
+    allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allow all headers
 )
 
 @app.post("/download-report")
@@ -61,7 +62,7 @@ async def download_report(file: UploadFile = File(...)):
     
     for entry in breakdown:
         pdf.multi_cell(0, 10, txt=f"Department: {entry['department']}, Reason: {entry['reason']}")
-    
+
     # Save PDF to BytesIO to serve as a file
     pdf_output = BytesIO()
     pdf.output(pdf_output)
