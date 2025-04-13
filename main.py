@@ -1,92 +1,94 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from io import BytesIO
+from fastapi import FastAPI, File, UploadFile, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 import pandas as pd
-from typing import Optional
+import io
+import os
+from fpdf import FPDF
+from datetime import datetime
 
 app = FastAPI()
 
-# Required Columns
-REQUIRED_COLUMNS = ['Employee ID', 'Employee Name', 'Department', 'Salary']
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Function to generate the natural language summary
-def generate_summary(df: pd.DataFrame) -> str:
-    summary = []
-    total_employees = len(df)
-    total_salary = df['Salary'].sum()
-    avg_salary = df['Salary'].mean()
-
-    summary.append(f"Total employees: {total_employees}")
-    summary.append(f"Total salary expense: {total_salary:,.2f}")
-    summary.append(f"Average salary: {avg_salary:,.2f}")
-
-    if 'Bonus' in df.columns:
-        total_bonus = df['Bonus'].sum()
-        avg_bonus = df['Bonus'].mean()
-        summary.append(f"Total bonuses: {total_bonus:,.2f}")
-        summary.append(f"Average bonus: {avg_bonus:,.2f}")
+# AI-driven summary generator
+def generate_ai_summary(df):
+    summary_lines = []
+    total_salary_change = df["Current Salary"].sum() - df["Previous Salary"].sum()
+    total_previous_salary = df["Previous Salary"].sum()
+    overall_change_percentage = (total_salary_change / total_previous_salary) * 100 if total_previous_salary else 0
     
-    return "\n".join(summary)
+    summary_lines.append(f"Overall salary change: ₹{total_salary_change:,.2f} ({overall_change_percentage:.2f}%)\n")
 
-@app.post("/upload-excel/")
-async def upload_excel(file: UploadFile = File(...)):
-    try:
-        contents = await file.read()
-        df = pd.read_excel(BytesIO(contents))
-
-        # Check for missing required columns
-        for col in REQUIRED_COLUMNS:
-            if col not in df.columns:
-                raise HTTPException(status_code=400, detail=f"Missing required column: {col}")
+    # Analyzing departments and salary trends
+    for dept in df["Department"].unique():
+        dept_df = df[df["Department"] == dept]
+        dept_salary_change = dept_df["Current Salary"].sum() - dept_df["Previous Salary"].sum()
+        dept_previous_salary = dept_df["Previous Salary"].sum()
+        dept_percentage_change = (dept_salary_change / dept_previous_salary) * 100 if dept_previous_salary else 0
         
-        # Handle Bonus column and convert columns to numeric as needed
-        df['Salary'] = pd.to_numeric(df['Salary'], errors='coerce')
-        if 'Bonus' in df.columns:
-            df['Bonus'] = pd.to_numeric(df['Bonus'], errors='coerce')
+        summary_lines.append(f"Department: {dept}\n")
+        summary_lines.append(f"  - Salary Change: ₹{dept_salary_change:,.2f} ({dept_percentage_change:.2f}%)\n")
+        
+        # AI-driven insights on potential salary imbalances
+        avg_current_salary = dept_df["Current Salary"].mean()
+        avg_previous_salary = dept_df["Previous Salary"].mean()
+        if avg_current_salary > avg_previous_salary:
+            summary_lines.append(f"  - The department has experienced an overall salary increase.\n")
+        elif avg_current_salary < avg_previous_salary:
+            summary_lines.append(f"  - The department has experienced a decrease in salary on average.\n")
+        else:
+            summary_lines.append(f"  - Salary remains stable on average.\n")
+        
+    return "".join(summary_lines)
 
-        # Generate natural language summary
-        summary = generate_summary(df)
+# Dynamic PDF creator
+def create_pdf(summary: str, df: pd.DataFrame):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.multi_cell(0, 10, f"Salary Variance Summary - {datetime.now().strftime('%Y-%m-%d')}\n\n")
+    pdf.set_font("Arial", size=10)
+    pdf.multi_cell(0, 10, summary)
 
-        # Return data along with the summary
-        return {
-            "summary": summary,
-            "data": df.to_dict(orient="records")
-        }
+    pdf.add_page()
+    pdf.set_font("Arial", size=10)
+    
+    # Dynamically fetch column names for the table
+    columns = df.columns.tolist()
+    col_widths = [max([len(str(val)) for val in df[col]]) * 5 for col in columns]  # Adjusting column width dynamically
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Table headers
+    for col in columns:
+        pdf.cell(col_widths[columns.index(col)], 10, col, 1)
+    pdf.ln()
 
-@app.post("/download-report/")
-async def download_report(file: UploadFile = File(...)):
-    try:
-        contents = await file.read()
-        df = pd.read_excel(BytesIO(contents))
+    # Table data
+    for _, row in df.iterrows():
+        for col in columns:
+            pdf.cell(col_widths[columns.index(col)], 10, str(row[col]), 1)
+        pdf.ln()
 
-        # Check for missing required columns
-        for col in REQUIRED_COLUMNS:
-            if col not in df.columns:
-                raise HTTPException(status_code=400, detail=f"Missing required column: {col}")
-
-        # Handle Bonus column and convert columns to numeric as needed
-        df['Salary'] = pd.to_numeric(df['Salary'], errors='coerce')
-        if 'Bonus' in df.columns:
-            df['Bonus'] = pd.to_numeric(df['Bonus'], errors='coerce')
-
-        # Generate natural language summary
-        summary = generate_summary(df)
-
-        # Create an output stream for the Excel file
-        output = BytesIO()
-        df.to_excel(output, index=False)
-        output.seek(0)
-
-        return {
-            "summary": summary,
-            "file": output.read()  # Returns the file content
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    output = io.BytesIO()
+    pdf.output(output)
+    output.seek(0)
+    return output
 
 @app.get("/")
-async def read_root():
-    return {"message": "AI Salary Variance Tool is working!"}
+def root():
+    return {"message": "AI Salary Tool is live."}
+
+@app.post("/download-report")
+def download_report(file: UploadFile = File(...)):
+    try:
+        contents = file.file.read()
+        df = pd.read_excel(io.BytesIO(contents))
+
+        # Ensure that necessary columns exist
+        required_columns =_
