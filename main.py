@@ -1,85 +1,81 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
 import pandas as pd
-import numpy as np
 from io import BytesIO
+from fastapi.responses import StreamingResponse
 from fpdf import FPDF
 
 app = FastAPI()
 
-# Allow all CORS origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 @app.post("/download-report")
 async def download_report(file: UploadFile = File(...)):
-    try:
-        # Read and load Excel data
-        content = await file.read()
-        df = pd.read_excel(BytesIO(content))
+    # Read the file content and load it into a DataFrame
+    content = await file.read()
+    df = pd.read_excel(BytesIO(content))
 
-        if 'Salary' not in df.columns or 'Previous Salary' not in df.columns:
-            return JSONResponse(status_code=400, content={"error": "Required columns 'Salary' and 'Previous Salary' not found."})
+    # Automatically detect and handle columns
+    expected_columns = ['Salary', 'Previous Salary', 'Bonus', 'Previous Bonus', 'Department']
+    salary_columns = [col for col in expected_columns if col in df.columns]
 
-        # Core Calculations
-        total_salary_current = df['Salary'].sum()
-        total_salary_previous = df['Previous Salary'].sum()
-        salary_diff = total_salary_current - total_salary_previous
-        percent_change = (salary_diff / total_salary_previous) * 100 if total_salary_previous != 0 else 0
+    # Calculate total salary and bonus if columns exist
+    total_salary_current = df['Salary'].sum() if 'Salary' in df.columns else 0
+    total_salary_previous = df['Previous Salary'].sum() if 'Previous Salary' in df.columns else 0
+    total_bonus_current = df['Bonus'].sum() if 'Bonus' in df.columns else 0
+    total_bonus_previous = df['Previous Bonus'].sum() if 'Previous Bonus' in df.columns else 0
 
-        # Generate natural language summary
-        direction = "increased" if salary_diff > 0 else "decreased"
-        summary = f"The total salary payout has {direction} by {abs(salary_diff):,.2f} ({abs(percent_change):.2f}%) compared to the previous month."
+    # Calculate total variance and change
+    total_current = total_salary_current + total_bonus_current
+    total_previous = total_salary_previous + total_bonus_previous
+    salary_variance = total_current - total_previous
+    salary_change_percentage = (salary_variance / total_previous) * 100 if total_previous != 0 else 0
 
-        # Identify related columns
-        breakdown = []
-        if 'Department' in df.columns:
-            for dept in df['Department'].unique():
-                sub_df = df[df['Department'] == dept]
-                sub_salary_change = sub_df['Salary'].sum() - sub_df['Previous Salary'].sum()
-                direction = "increased" if sub_salary_change > 0 else "decreased"
-                breakdown.append(f"Department: {dept} - Salary {direction} by {abs(sub_salary_change):,.2f}.")
+    # Generate a summary based on the data
+    summary = f"Total salary payout (including bonus) is {salary_variance:.2f} ({salary_change_percentage:.2f}%) compared to the previous period."
 
-        # Include any other numeric columns for summary
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        metric_summary = "\n".join([
-            f"Average {col}: {df[col].mean():,.2f}, Max: {df[col].max():,.2f}, Min: {df[col].min():,.2f}"
-            for col in numeric_cols if col not in ['Salary', 'Previous Salary']
-        ])
-
-        # Create PDF
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=12)
-        pdf.cell(200, 10, txt="Salary Variance Report", ln=True, align="C")
-        pdf.ln(10)
-        pdf.multi_cell(0, 10, summary)
-
-        if breakdown:
-            pdf.ln(5)
-            pdf.multi_cell(0, 10, "Department-wise Breakdown:")
-            for item in breakdown:
-                pdf.multi_cell(0, 10, item)
-
-        if metric_summary:
-            pdf.ln(5)
-            pdf.multi_cell(0, 10, "Other Metric Summary:")
-            pdf.multi_cell(0, 10, metric_summary)
-
-        # Prepare response
-        pdf_output = BytesIO()
-        pdf.output(pdf_output)
-        pdf_output.seek(0)
-
-        return StreamingResponse(pdf_output, media_type="application/pdf", headers={
-            "Content-Disposition": "attachment; filename=SalaryVarianceReport.pdf"
+    # Generate breakdown of salary variance reasons based on department (example logic)
+    breakdown = []
+    departments = df['Department'].unique() if 'Department' in df.columns else ['Unknown']
+    
+    for dept in departments:
+        dept_data = df[df['Department'] == dept]
+        dept_salary_change = dept_data['Salary'].sum() - dept_data['Previous Salary'].sum() if 'Salary' in df.columns and 'Previous Salary' in df.columns else 0
+        dept_bonus_change = dept_data['Bonus'].sum() - dept_data['Previous Bonus'].sum() if 'Bonus' in df.columns and 'Previous Bonus' in df.columns else 0
+        dept_total_change = dept_salary_change + dept_bonus_change
+        breakdown.append({
+            "department": dept,
+            "reason": f"Salary change: {dept_salary_change:.2f}, Bonus change: {dept_bonus_change:.2f}, Total change: {dept_total_change:.2f}"
         })
+    
+    # Generate the natural language summary
+    nl_summary = "The salary variance report indicates the following summary and department-wise breakdown:\n\n"
+    nl_summary += summary + "\n\nBreakdown by department:\n"
+    
+    for entry in breakdown:
+        nl_summary += f"Department: {entry['department']}, Reason: {entry['reason']}\n"
+    
+    # Create PDF document
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
 
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+    # Title
+    pdf.cell(200, 10, txt="Salary Variance Report", ln=True, align="C")
+    pdf.ln(10)  # Add space between title and content
+    
+    # Add Dynamic Summary to the PDF
+    pdf.multi_cell(0, 10, txt=nl_summary)
+    
+    # Save PDF to BytesIO to serve as a file
+    pdf_output = BytesIO()
+    pdf.output(pdf_output)
+    pdf_output.seek(0)
+
+    # Return PDF as a downloadable response
+    return StreamingResponse(pdf_output, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=SalaryVarianceReport.pdf"})
