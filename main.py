@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import pandas as pd
 import io
-import os
 from fpdf import FPDF
 from datetime import datetime
 
@@ -92,4 +91,17 @@ def download_report(file: UploadFile = File(...)):
         df["Bonus"] = df.get("Bonus", 0)
         df["Previous Salary"] = pd.to_numeric(df["Previous Salary"], errors='coerce').fillna(0)
         df["Current Salary"] = pd.to_numeric(df["Current Salary"], errors='coerce').fillna(0)
-        df["Bonus"] = pd.to_numeric_
+        df["Bonus"] = pd.to_numeric(df["Bonus"], errors='coerce').fillna(0)
+
+        # Generate AI summary and create PDF
+        summary = generate_summary(df)
+        pdf = create_pdf(summary, df)
+
+        return StreamingResponse(pdf, media_type="application/pdf", headers={
+            "Content-Disposition": f"attachment; filename=salary_report_{datetime.now().strftime('%Y%m%d')}.pdf"
+        })
+
+    except Exception as e:
+        import logging
+        logging.error(f"Error processing request: {e}")
+        return Response(content=f"500 Internal Server Error\n\n{str(e)}", status_code=500)
