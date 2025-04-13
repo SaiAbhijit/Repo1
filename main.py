@@ -7,7 +7,10 @@ import os
 from fpdf import FPDF
 from datetime import datetime
 import openai
+import logging
 
+# Set up logging (add this near the start of your script)
+logging.basicConfig(level=logging.INFO)
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 app = FastAPI()
@@ -20,6 +23,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import logging
+
+# Set up logging (add this near the start of your script)
+logging.basicConfig(level=logging.INFO)
+
 def generate_summary(df):
     try:
         prompt = "You are an HR analyst. Analyze the following salary data:\n\n"
@@ -28,16 +36,20 @@ def generate_summary(df):
         prompt += "\n\nWrite a concise, insightful summary highlighting trends and changes in less than 100 words. Include observations on total salary, bonus variations, and department-level differences."
 
         if openai.api_key:
-            print("🔍 Using OpenAI for AI-generated summary.")
+            logging.info("Using OpenAI for AI-generated summary.")  # Add this log to confirm API call
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=300
             )
+            logging.info("AI summary generated successfully.")  # Confirmation of successful AI summary generation
             return response.choices[0].message.content.strip()
         else:
+            logging.warning(" OpenAI API key not set.")  # Log if API key is not set
             raise ValueError("OpenAI API key not set.")
     except Exception as e:
+        logging.error(f"Error generating AI summary: {e}")  # Log the error if something goes wrong
+        # Fallback logic in case of error
         fallback_summary_lines = []
         overall_change = df["Current Salary"].sum() - df["Previous Salary"].sum()
         percent_change = (overall_change / df["Previous Salary"].sum()) * 100 if df["Previous Salary"].sum() else 0
