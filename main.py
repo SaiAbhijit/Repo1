@@ -1,8 +1,9 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
 import pandas as pd
+import numpy as np
 from io import BytesIO
+from fastapi.responses import StreamingResponse
 from fpdf import FPDF
 
 app = FastAPI()
@@ -14,60 +15,77 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-def root():
-    return {"message": "Salary Variance Tool API is running"}
-
 @app.post("/download-report")
 async def download_report(file: UploadFile = File(...)):
     try:
-        # Read file content and load it into a DataFrame
         content = await file.read()
         df = pd.read_excel(BytesIO(content))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail="Error reading Excel file. " + str(e))
-    
-    # Check for necessary columns – adjust these as needed
-    required_columns = ['Salary', 'Previous Salary', 'Department']
-    for col in required_columns:
-        if col not in df.columns:
-            raise HTTPException(status_code=400, detail=f"Missing required column: {col}")
 
-    try:
-        # Process the data for dynamic summary.
-        total_salary_current = df['Salary'].sum()
-        total_salary_previous = df['Previous Salary'].sum()
-        if total_salary_previous == 0:
-            raise HTTPException(status_code=400, detail="Previous salary total cannot be zero.")
-        salary_variance = total_salary_current - total_salary_previous
-        salary_change_percentage = (salary_variance / total_salary_previous) * 100
+        if df.empty:
+            return {"error": "Uploaded file is empty or invalid."}
 
-        summary = f"Total salary payout change: {salary_variance:.2f} ({salary_change_percentage:.2f}%) compared to the previous month."
+        # Identify numerical columns for analysis
+        numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
 
+        # Detect month-to-month comparison columns
+        current_cols = [col for col in numeric_cols if "Current" in col or "Salary" in col or "Now" in col]
+        previous_cols = [col for col in numeric_cols if "Previous" in col or "Last" in col or "Before" in col]
+
+        summary_lines = []
         breakdown = []
-        for dept in df['Department'].unique():
-            dept_data = df[df['Department'] == dept]
-            dept_salary_change = dept_data['Salary'].sum() - dept_data['Previous Salary'].sum()
-            breakdown.append(f"Department: {dept}, Salary change: {dept_salary_change:.2f}")
 
-        # Generate PDF
+        for curr_col in current_cols:
+            matched_prev = None
+            for prev_col in previous_cols:
+                if prev_col.split()[0] in curr_col:
+                    matched_prev = prev_col
+                    break
+
+            if matched_prev:
+                diff = df[curr_col].sum() - df[matched_prev].sum()
+                pct = (diff / df[matched_prev].sum()) * 100 if df[matched_prev].sum() != 0 else 0
+                summary_lines.append(
+                    f"Total change in {curr_col}: {diff:.2f} ({pct:.2f}%) compared to {matched_prev}."
+                )
+
+                # Department-wise or group-wise breakdown if available
+                if 'Department' in df.columns:
+                    departments = df['Department'].unique()
+                    for dept in departments:
+                        dept_df = df[df['Department'] == dept]
+                        dept_diff = dept_df[curr_col].sum() - dept_df[matched_prev].sum()
+                        breakdown.append(
+                            f"Department: {dept}, Change in {curr_col}: {dept_diff:.2f}"
+                        )
+
+        summary_text = "\n".join(summary_lines)
+        breakdown_text = "\n".join(breakdown)
+
+        # === PDF Generation ===
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", size=12)
-        pdf.cell(200, 10, txt="Salary Variance Report", ln=True, align="C")
-        pdf.ln(10)
-        pdf.multi_cell(0, 10, txt=summary)
-        pdf.ln(10)
-        pdf.multi_cell(0, 10, txt="Breakdown:")
-        for line in breakdown:
-            pdf.multi_cell(0, 10, txt=line)
 
-        # Instead of writing to a BytesIO stream directly,
-        # get PDF as a string and then encode it.
-        pdf_data = pdf.output(dest="S").encode("latin1")  # using 'latin1' as recommended by fpdf docs
+        pdf.cell(200, 10, txt="Detailed Salary Variance Report", ln=True, align="C")
+        pdf.ln(10)
 
-        return Response(content=pdf_data,
-                        media_type="application/pdf",
-                        headers={"Content-Disposition": "attachment; filename=SalaryVarianceReport.pdf"})
+        pdf.multi_cell(0, 10, txt="Summary:")
+        pdf.multi_cell(0, 10, txt=summary_text)
+        pdf.ln(10)
+
+        if breakdown_text:
+            pdf.multi_cell(0, 10, txt="Breakdown by Department:")
+            pdf.multi_cell(0, 10, txt=breakdown_text)
+
+        pdf_output = BytesIO()
+        pdf.output(pdf_output)
+        pdf_output.seek(0)
+
+        return StreamingResponse(
+            pdf_output,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=DetailedSalaryVarianceReport.pdf"},
+        )
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Error generating PDF: " + str(e))
+        return {"error": str(e)}
