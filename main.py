@@ -23,11 +23,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-import logging
-
-# Set up logging (add this near the start of your script)
-logging.basicConfig(level=logging.INFO)
-
 def generate_summary(df):
     try:
         prompt = "You are an HR analyst. Analyze the following salary data:\n\n"
