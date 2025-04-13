@@ -40,13 +40,13 @@ def generate_summary(df):
         fallback_summary_lines = []
         overall_change = df["Current Salary"].sum() - df["Previous Salary"].sum()
         percent_change = (overall_change / df["Previous Salary"].sum()) * 100 if df["Previous Salary"].sum() else 0
-        fallback_summary_lines.append(f"Total salary change: ₹{overall_change:,.2f} ({percent_change:.2f}%)\n")
+        fallback_summary_lines.append(f"Total salary change: {overall_change:,.2f} ({percent_change:.2f}%)\n")
 
         for dept in df["Department"].unique():
             dept_df = df[df["Department"] == dept]
             change = dept_df["Current Salary"].sum() - dept_df["Previous Salary"].sum()
             pct = (change / dept_df["Previous Salary"].sum()) * 100 if dept_df["Previous Salary"].sum() else 0
-            fallback_summary_lines.append(f"{dept}: ₹{change:,.2f} ({pct:.2f}%)\n")
+            fallback_summary_lines.append(f"{dept}: {change:,.2f} ({pct:.2f}%)\n")
 
         return "".join(fallback_summary_lines)
 
@@ -72,13 +72,12 @@ def create_pdf(summary: str, df: pd.DataFrame):
             str(row.get("Employee ID", "")),
             str(row.get("Name", "")),
             str(row.get("Department", "")),
-            f"₹{row.get('Previous Salary', 0):,.2f}",
-            f"₹{row.get('Current Salary', 0):,.2f}",
-            f"₹{row.get('Bonus', 0):,.2f}"
+            f"{row.get('Previous Salary', 0):,.2f}",
+            f"{row.get('Current Salary', 0):,.2f}",
+            f"{row.get('Bonus', 0):,.2f}"
         ]
         for i, value in enumerate(values):
             try:
-                # Using encode('latin-1', 'replace') to avoid encoding issues
                 pdf.cell(col_widths[i], 10, value.encode('latin-1', 'replace').decode('latin-1'), 1)
             except Exception as e:
                 pdf.cell(col_widths[i], 10, value, 1)  # Fallback for unsupported characters
