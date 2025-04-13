@@ -3,4 +3,4 @@ uvicorn
 pandas
 openpyxl
 fpdf
-
+python-multipart
