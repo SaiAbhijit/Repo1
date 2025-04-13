@@ -37,13 +37,13 @@ def generate_summary(df):
 def create_pdf(summary: str, df: pd.DataFrame):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
+    pdf.set_font("Arial", size=12, encoding='UTF-8')
     pdf.multi_cell(0, 10, f"Salary Variance Summary - {datetime.now().strftime('%Y-%m-%d')}\n\n")
-    pdf.set_font("Arial", size=10)
+    pdf.set_font("Arial", size=10, encoding='UTF-8')
     pdf.multi_cell(0, 10, summary)
 
     pdf.add_page()
-    pdf.set_font("Arial", size=10)
+    pdf.set_font("Arial", size=10, encoding='UTF-8')
     col_widths = [30, 40, 40, 30, 30, 30]
     headers = ["Employee ID", "Name", "Department", "Previous Salary", "Current Salary", "Bonus"]
 
