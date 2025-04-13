@@ -13,7 +13,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+@app.get("/")
+async def read_root():
+    return {"message": "Welcome to the Salary Variance Tool API"}
+    
 @app.post("/analyze")
 async def analyze_salary_data(file: UploadFile = File(...)):
     content = await file.read()
