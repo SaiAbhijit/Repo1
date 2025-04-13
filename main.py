@@ -84,7 +84,8 @@ def create_pdf(summary: str, df: pd.DataFrame):
         pdf.ln()
 
     output = io.BytesIO()
-    pdf.output(output)
+    pdf_output = pdf.output(dest='S').encode('latin-1')
+    output.write(pdf_output)
     output.seek(0)
     return output
 
