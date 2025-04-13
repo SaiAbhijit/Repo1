@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, Response
+from fastapi import FastAPI, File, UploadFile, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import pandas as pd
@@ -7,6 +7,7 @@ import os
 import openai
 from fpdf import FPDF
 from datetime import datetime
+import json
 
 app = FastAPI()
 
@@ -20,44 +21,62 @@ app.add_middleware(
 
 openai.api_key = os.getenv("OPENAI_API_KEY")  # Set your key in environment or replace with your key string
 
+def map_columns(df: pd.DataFrame):
+    """ Maps potentially varying column names to standard names """
+    column_mappings = {
+        "Employee ID": ["Emp ID", "ID"],
+        "Name": ["Full Name", "Employee Name"],
+        "Department": ["Dept", "Division"],
+        "Previous Salary": ["Old Salary", "Base Salary", "Salary 2023"],
+        "Current Salary": ["New Salary", "Salary 2024", "Updated Salary"],
+        "Bonus": ["Incentive", "Performance Bonus"]
+    }
+    
+    mapped_df = df.copy()
+    for standard_col, possible_names in column_mappings.items():
+        for name in possible_names:
+            if name in df.columns:
+                mapped_df.rename(columns={name: standard_col}, inplace=True)
+
+    return mapped_df
+
 def generate_summary(df: pd.DataFrame) -> str:
+    """ AI-driven summary with insights and anomalies """
     try:
-        prompt = "You are an HR analyst. Analyze the following salary data and give a professional summary of the salary variance.\n\n"
-        prompt += df[["Department", "Previous Salary", "Current Salary"]].groupby("Department").sum().to_string()
-        prompt += "\n\nProvide a summary of overall trends and department-level insights in about 100 words."
+        prompt = "You are an expert HR analyst. Analyze the following salary data and provide insights:\n\n"
+        prompt += df.groupby("Department").agg({
+            "Previous Salary": "sum",
+            "Current Salary": "sum",
+            "Bonus": "sum"
+        }).to_string()
+        
+        prompt += "\n\nIdentify key trends, anomalies, high percentage salary changes, and department-level insights."
+        prompt += " Your summary should be detailed but concise, with relevant insights in around 150 words."
 
         if openai.api_key:
             response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",  # Or "gpt-4" if available
+                model="gpt-4",
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=300
+                max_tokens=400
             )
-            summary = response.choices[0].message.content.strip()
-            return summary
+            return response.choices[0].message.content.strip()
         else:
-            # Fallback if API key isn't set
-            overall_change = df["Current Salary"].sum() - df["Previous Salary"].sum()
-            percent_change = (overall_change / df["Previous Salary"].sum()) * 100 if df["Previous Salary"].sum() else 0
-            summary = f"Total salary change: ₹{overall_change:,.2f} ({percent_change:.2f}%)\n"
-            for dept in df["Department"].unique():
-                dept_df = df[df["Department"] == dept]
-                change = dept_df["Current Salary"].sum() - dept_df["Previous Salary"].sum()
-                pct = (change / dept_df["Previous Salary"].sum()) * 100 if dept_df["Previous Salary"].sum() else 0
-                summary += f"{dept}: ₹{change:,.2f} ({pct:.2f}%)\n"
-            return summary
+            return "AI summary could not be generated due to missing API key."
+
     except Exception as e:
         return f"Error generating AI summary: {str(e)}"
 
 def create_pdf(summary: str, df: pd.DataFrame):
+    """ Generates a PDF report from AI analysis and raw data """
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    pdf.multi_cell(0, 10, f"Salary Variance Summary - {datetime.now().strftime('%Y-%m-%d')}\n\n")
+    pdf.multi_cell(0, 10, f"Employee Salary Analysis Report - {datetime.now().strftime('%Y-%m-%d')}\n\n")
+    
     pdf.set_font("Arial", size=10)
     pdf.multi_cell(0, 10, summary)
 
     pdf.add_page()
-    pdf.set_font("Arial", size=10)
     col_widths = [30, 40, 40, 30, 30, 30]
     headers = ["Employee ID", "Name", "Department", "Previous Salary", "Current Salary", "Bonus"]
 
@@ -85,13 +104,14 @@ def create_pdf(summary: str, df: pd.DataFrame):
 
 @app.get("/")
 def root():
-    return {"message": "AI Salary Tool is live."}
+    return {"message": "AI Salary Analysis Tool is live."}
 
-@app.post("/download-report")
-def download_report(file: UploadFile = File(...)):
+@app.post("/upload-file")
+def upload_file(file: UploadFile = File(...)):
     try:
         contents = file.file.read()
         df = pd.read_excel(io.BytesIO(contents))
+        df = map_columns(df)
 
         required_columns = ["Employee ID", "Name", "Department", "Previous Salary", "Current Salary"]
         for col in required_columns:
@@ -111,6 +131,17 @@ def download_report(file: UploadFile = File(...)):
         })
 
     except Exception as e:
-        import logging
-        logging.error(f"Error processing request: {e}")
         return Response(content=f"500 Internal Server Error\n\n{str(e)}", status_code=500)
+
+@app.post("/upload-api-data")
+def upload_api_data(data: dict):
+    """ Allows API-based data ingestion """
+    try:
+        df = pd.DataFrame(data)
+        df = map_columns(df)
+
+        summary = generate_summary(df)
+        return {"summary": summary}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
