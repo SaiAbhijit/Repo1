@@ -1,18 +1,15 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
-from pydantic import BaseModel
-import pandas as pd
 from io import BytesIO
-import os
-from typing import List, Optional
-from io import StringIO
+import pandas as pd
+from typing import Optional
 
 app = FastAPI()
 
-# Define required columns
+# Required Columns
 REQUIRED_COLUMNS = ['Employee ID', 'Employee Name', 'Department', 'Salary']
 
-# Function to generate a natural language summary
-def generate_summary(df: pd.DataFrame):
+# Function to generate the natural language summary
+def generate_summary(df: pd.DataFrame) -> str:
     summary = []
     total_employees = len(df)
     total_salary = df['Salary'].sum()
@@ -41,7 +38,7 @@ async def upload_excel(file: UploadFile = File(...)):
             if col not in df.columns:
                 raise HTTPException(status_code=400, detail=f"Missing required column: {col}")
         
-        # Validate data types and preprocess if needed
+        # Handle Bonus column and convert columns to numeric as needed
         df['Salary'] = pd.to_numeric(df['Salary'], errors='coerce')
         if 'Bonus' in df.columns:
             df['Bonus'] = pd.to_numeric(df['Bonus'], errors='coerce')
@@ -49,10 +46,10 @@ async def upload_excel(file: UploadFile = File(...)):
         # Generate natural language summary
         summary = generate_summary(df)
 
-        # Return summary in response
+        # Return data along with the summary
         return {
             "summary": summary,
-            "data": df.to_dict(orient="records")  # Return data in case further use is required
+            "data": df.to_dict(orient="records")
         }
 
     except Exception as e:
@@ -68,8 +65,8 @@ async def download_report(file: UploadFile = File(...)):
         for col in REQUIRED_COLUMNS:
             if col not in df.columns:
                 raise HTTPException(status_code=400, detail=f"Missing required column: {col}")
-        
-        # Validate data types and preprocess if needed
+
+        # Handle Bonus column and convert columns to numeric as needed
         df['Salary'] = pd.to_numeric(df['Salary'], errors='coerce')
         if 'Bonus' in df.columns:
             df['Bonus'] = pd.to_numeric(df['Bonus'], errors='coerce')
@@ -77,15 +74,19 @@ async def download_report(file: UploadFile = File(...)):
         # Generate natural language summary
         summary = generate_summary(df)
 
-        # Export data to Excel and return for download
+        # Create an output stream for the Excel file
         output = BytesIO()
         df.to_excel(output, index=False)
         output.seek(0)
 
         return {
             "summary": summary,
-            "file": output.read()  # This will allow the file to be downloaded
+            "file": output.read()  # Returns the file content
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/")
+async def read_root():
+    return {"message": "AI Salary Variance Tool is working!"}
