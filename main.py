@@ -77,7 +77,11 @@ def create_pdf(summary: str, df: pd.DataFrame):
             f"₹{row.get('Bonus', 0):,.2f}"
         ]
         for i, value in enumerate(values):
-            pdf.cell(col_widths[i], 10, value, 1)
+            try:
+                # Using encode('latin-1', 'replace') to avoid encoding issues
+                pdf.cell(col_widths[i], 10, value.encode('latin-1', 'replace').decode('latin-1'), 1)
+            except Exception as e:
+                pdf.cell(col_widths[i], 10, value, 1)  # Fallback for unsupported characters
         pdf.ln()
 
     output = io.BytesIO()
