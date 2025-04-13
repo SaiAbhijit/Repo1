@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 pandas
+numpy
 openpyxl
 fpdf
 python-multipart
