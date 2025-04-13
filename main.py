@@ -23,9 +23,9 @@ app.add_middleware(
 def generate_summary(df):
     try:
         prompt = "You are an HR analyst. Analyze the following salary data:\n\n"
-        summary_table = df[["Department", "Previous Salary", "Current Salary"]].groupby("Department").sum().reset_index()
+        summary_table = df[["Department", "Previous Salary", "Current Salary", "Bonus"]].groupby("Department").sum().reset_index()
         prompt += summary_table.to_string(index=False)
-        prompt += "\n\nWrite a concise, insightful summary highlighting trends and changes in less than 100 words."
+        prompt += "\n\nWrite a concise, insightful summary highlighting trends and changes in less than 100 words. Include observations on total salary, bonus variations, and department-level differences."
 
         if openai.api_key:
             response = openai.ChatCompletion.create(
@@ -40,13 +40,16 @@ def generate_summary(df):
         fallback_summary_lines = []
         overall_change = df["Current Salary"].sum() - df["Previous Salary"].sum()
         percent_change = (overall_change / df["Previous Salary"].sum()) * 100 if df["Previous Salary"].sum() else 0
-        fallback_summary_lines.append(f"Total salary change: {overall_change:,.2f} ({percent_change:.2f}%)\n")
+        bonus_total = df["Bonus"].sum()
+        fallback_summary_lines.append(f"Total salary change: Rs {overall_change:,.2f} ({percent_change:.2f}%)\n")
+        fallback_summary_lines.append(f"Total bonuses awarded: Rs {bonus_total:,.2f}\n")
 
         for dept in df["Department"].unique():
             dept_df = df[df["Department"] == dept]
             change = dept_df["Current Salary"].sum() - dept_df["Previous Salary"].sum()
             pct = (change / dept_df["Previous Salary"].sum()) * 100 if dept_df["Previous Salary"].sum() else 0
-            fallback_summary_lines.append(f"{dept}: {change:,.2f} ({pct:.2f}%)\n")
+            dept_bonus = dept_df["Bonus"].sum()
+            fallback_summary_lines.append(f"{dept}: Rs {change:,.2f} ({pct:.2f}%), Bonus: Rs {dept_bonus:,.2f}\n")
 
         return "".join(fallback_summary_lines)
 
@@ -72,15 +75,12 @@ def create_pdf(summary: str, df: pd.DataFrame):
             str(row.get("Employee ID", "")),
             str(row.get("Name", "")),
             str(row.get("Department", "")),
-            f"{row.get('Previous Salary', 0):,.2f}",
-            f"{row.get('Current Salary', 0):,.2f}",
-            f"{row.get('Bonus', 0):,.2f}"
+            f"Rs {row.get('Previous Salary', 0):,.2f}",
+            f"Rs {row.get('Current Salary', 0):,.2f}",
+            f"Rs {row.get('Bonus', 0):,.2f}"
         ]
         for i, value in enumerate(values):
-            try:
-                pdf.cell(col_widths[i], 10, value.encode('latin-1', 'replace').decode('latin-1'), 1)
-            except Exception as e:
-                pdf.cell(col_widths[i], 10, value, 1)  # Fallback for unsupported characters
+            pdf.cell(col_widths[i], 10, value, 1)
         pdf.ln()
 
     output = io.BytesIO()
