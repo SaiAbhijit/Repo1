@@ -28,6 +28,7 @@ def generate_summary(df):
         prompt += "\n\nWrite a concise, insightful summary highlighting trends and changes in less than 100 words. Include observations on total salary, bonus variations, and department-level differences."
 
         if openai.api_key:
+            print("🔍 Using OpenAI for AI-generated summary.")
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[{"role": "user", "content": prompt}],
