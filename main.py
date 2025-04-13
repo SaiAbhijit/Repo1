@@ -1,16 +1,18 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, JSONResponse
 import pandas as pd
 import numpy as np
 from io import BytesIO
-from fastapi.responses import StreamingResponse
 from fpdf import FPDF
 
 app = FastAPI()
 
+# Allow all CORS origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -18,74 +20,66 @@ app.add_middleware(
 @app.post("/download-report")
 async def download_report(file: UploadFile = File(...)):
     try:
+        # Read and load Excel data
         content = await file.read()
         df = pd.read_excel(BytesIO(content))
 
-        if df.empty:
-            return {"error": "Uploaded file is empty or invalid."}
+        if 'Salary' not in df.columns or 'Previous Salary' not in df.columns:
+            return JSONResponse(status_code=400, content={"error": "Required columns 'Salary' and 'Previous Salary' not found."})
 
-        # Identify numerical columns for analysis
-        numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+        # Core Calculations
+        total_salary_current = df['Salary'].sum()
+        total_salary_previous = df['Previous Salary'].sum()
+        salary_diff = total_salary_current - total_salary_previous
+        percent_change = (salary_diff / total_salary_previous) * 100 if total_salary_previous != 0 else 0
 
-        # Detect month-to-month comparison columns
-        current_cols = [col for col in numeric_cols if "Current" in col or "Salary" in col or "Now" in col]
-        previous_cols = [col for col in numeric_cols if "Previous" in col or "Last" in col or "Before" in col]
+        # Generate natural language summary
+        direction = "increased" if salary_diff > 0 else "decreased"
+        summary = f"The total salary payout has {direction} by {abs(salary_diff):,.2f} ({abs(percent_change):.2f}%) compared to the previous month."
 
-        summary_lines = []
+        # Identify related columns
         breakdown = []
+        if 'Department' in df.columns:
+            for dept in df['Department'].unique():
+                sub_df = df[df['Department'] == dept]
+                sub_salary_change = sub_df['Salary'].sum() - sub_df['Previous Salary'].sum()
+                direction = "increased" if sub_salary_change > 0 else "decreased"
+                breakdown.append(f"Department: {dept} - Salary {direction} by {abs(sub_salary_change):,.2f}.")
 
-        for curr_col in current_cols:
-            matched_prev = None
-            for prev_col in previous_cols:
-                if prev_col.split()[0] in curr_col:
-                    matched_prev = prev_col
-                    break
+        # Include any other numeric columns for summary
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        metric_summary = "\n".join([
+            f"Average {col}: {df[col].mean():,.2f}, Max: {df[col].max():,.2f}, Min: {df[col].min():,.2f}"
+            for col in numeric_cols if col not in ['Salary', 'Previous Salary']
+        ])
 
-            if matched_prev:
-                diff = df[curr_col].sum() - df[matched_prev].sum()
-                pct = (diff / df[matched_prev].sum()) * 100 if df[matched_prev].sum() != 0 else 0
-                summary_lines.append(
-                    f"Total change in {curr_col}: {diff:.2f} ({pct:.2f}%) compared to {matched_prev}."
-                )
-
-                # Department-wise or group-wise breakdown if available
-                if 'Department' in df.columns:
-                    departments = df['Department'].unique()
-                    for dept in departments:
-                        dept_df = df[df['Department'] == dept]
-                        dept_diff = dept_df[curr_col].sum() - dept_df[matched_prev].sum()
-                        breakdown.append(
-                            f"Department: {dept}, Change in {curr_col}: {dept_diff:.2f}"
-                        )
-
-        summary_text = "\n".join(summary_lines)
-        breakdown_text = "\n".join(breakdown)
-
-        # === PDF Generation ===
+        # Create PDF
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font("Arial", size=12)
-
-        pdf.cell(200, 10, txt="Detailed Salary Variance Report", ln=True, align="C")
+        pdf.cell(200, 10, txt="Salary Variance Report", ln=True, align="C")
         pdf.ln(10)
+        pdf.multi_cell(0, 10, summary)
 
-        pdf.multi_cell(0, 10, txt="Summary:")
-        pdf.multi_cell(0, 10, txt=summary_text)
-        pdf.ln(10)
+        if breakdown:
+            pdf.ln(5)
+            pdf.multi_cell(0, 10, "Department-wise Breakdown:")
+            for item in breakdown:
+                pdf.multi_cell(0, 10, item)
 
-        if breakdown_text:
-            pdf.multi_cell(0, 10, txt="Breakdown by Department:")
-            pdf.multi_cell(0, 10, txt=breakdown_text)
+        if metric_summary:
+            pdf.ln(5)
+            pdf.multi_cell(0, 10, "Other Metric Summary:")
+            pdf.multi_cell(0, 10, metric_summary)
 
+        # Prepare response
         pdf_output = BytesIO()
         pdf.output(pdf_output)
         pdf_output.seek(0)
 
-        return StreamingResponse(
-            pdf_output,
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=DetailedSalaryVarianceReport.pdf"},
-        )
+        return StreamingResponse(pdf_output, media_type="application/pdf", headers={
+            "Content-Disposition": "attachment; filename=SalaryVarianceReport.pdf"
+        })
 
     except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse(status_code=500, content={"error": str(e)})
