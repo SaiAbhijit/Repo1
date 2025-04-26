@@ -9,19 +9,18 @@ from datetime import datetime
 import openai
 import logging
 
-# Set up logging
+# Set up logging (add this near the start of your script)
 logging.basicConfig(level=logging.INFO)
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 app = FastAPI()
 
-# CORS Middleware Setup
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all HTTP methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 def generate_summary(df, selected_columns):
@@ -44,13 +43,10 @@ def generate_summary(df, selected_columns):
             logging.info("Using OpenAI for AI-generated summary.")
             response = openai.ChatCompletion.create(
                 model="gpt-4-turbo",
-                messages=[{
-                    "role": "system",
-                    "content": "You are a precise HR analyst. Never invent information."
-                }, {
-                    "role": "user",
-                    "content": prompt
-                }],
+                messages=[ 
+                    {"role": "system", "content": "You are a precise HR analyst. Never invent information."},
+                    {"role": "user", "content": prompt}
+                ],
                 max_tokens=300
             )
             logging.info("AI summary generated successfully.")
@@ -115,31 +111,24 @@ def root():
     return {"message": "AI Salary Tool is live."}
 
 @app.post("/download-report")
-def download_report(file: UploadFile = File(...), selected_columns: list = ["Department", "Previous Salary", "Current Salary", "Bonus"]):
+async def download_report(file: UploadFile = File(...), selected_columns: list = ["Department", "Previous Salary", "Current Salary", "Bonus"]):
     try:
-        # Read the uploaded file into DataFrame
-        contents = file.file.read()
+        contents = await file.read()  # Ensure file is read as a byte object
         df = pd.read_excel(io.BytesIO(contents))
 
-        # Check for required columns
         required_columns = ["Employee ID", "Name", "Department", "Previous Salary", "Current Salary"]
         for col in required_columns:
             if col not in df.columns:
                 raise ValueError(f"Missing required column: {col}")
 
-        # Data cleaning and preparation
         df["Bonus"] = df.get("Bonus", 0)
         df["Previous Salary"] = pd.to_numeric(df["Previous Salary"], errors='coerce').fillna(0)
         df["Current Salary"] = pd.to_numeric(df["Current Salary"], errors='coerce').fillna(0)
         df["Bonus"] = pd.to_numeric(df["Bonus"], errors='coerce').fillna(0)
 
-        # Generate summary
         summary = generate_summary(df, selected_columns)
-        
-        # Create PDF report
         pdf = create_pdf(summary, df)
 
-        # Return the PDF as a downloadable response
         return StreamingResponse(pdf, media_type="application/pdf", headers={
             "Content-Disposition": f"attachment; filename=salary_report_{datetime.now().strftime('%Y%m%d')}.pdf"
         })
