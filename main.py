@@ -1,13 +1,10 @@
-from fastapi import FastAPI, File, UploadFile, Response
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, File, UploadFile, HTTPException
 import pandas as pd
 import io
-import os
 from fpdf import FPDF
-from datetime import datetime
 import openai
 import logging
+import os
 
 # Set up logging for debugging and error handling
 logging.basicConfig(level=logging.INFO)
@@ -15,16 +12,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")  # Make sure the API key is set cor
 
 app = FastAPI()
 
-# CORS middleware to allow cross-origin requests
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Function to generate a summary using OpenAI's GPT-4 model
+# Function to generate summary using OpenAI GPT-4
 def generate_summary(df, selected_columns):
     try:
         # Ensure 'Department' is included for grouping if it's not in selected_columns
@@ -52,90 +40,43 @@ def generate_summary(df, selected_columns):
                 max_tokens=300
             )
             logging.info("AI summary generated successfully.")
-            return response.choices[0].message.content.strip()
-        else:
-            logging.warning("OpenAI API key not set.")
-            raise ValueError("OpenAI API key not set.")
+            return response.choices[0].message['content']
     except Exception as e:
-        logging.error(f"Error generating AI summary: {e}")
-        # Fallback logic in case of error
-        fallback_summary_lines = []
-        overall_change = df["Current Salary"].sum() - df["Previous Salary"].sum()
-        percent_change = (overall_change / df["Previous Salary"].sum()) * 100 if df["Previous Salary"].sum() else 0
-        bonus_total = df["Bonus"].sum()
-        fallback_summary_lines.append(f"Total salary change: Rs {overall_change:,.2f} ({percent_change:.2f}%)\n")
-        fallback_summary_lines.append(f"Total bonuses awarded: Rs {bonus_total:,.2f}\n")
-
-        for dept in df["Department"].unique():
-            dept_df = df[df["Department"] == dept]
-            change = dept_df["Current Salary"].sum() - dept_df["Previous Salary"].sum()
-            pct = (change / dept_df["Previous Salary"].sum()) * 100 if dept_df["Previous Salary"].sum() else 0
-            dept_bonus = dept_df["Bonus"].sum()
-            fallback_summary_lines.append(f"{dept}: Rs {change:,.2f} ({pct:.2f}%), Bonus: Rs {dept_bonus:,.2f}\n")
-
-        return "".join(fallback_summary_lines)
-
-# Function to create PDF report from the summary and dataframe
-def create_pdf(summary: str, df: pd.DataFrame):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    pdf.multi_cell(0, 10, f"Salary Variance Summary - {datetime.now().strftime('%Y-%m-%d')}\n\n")
-    pdf.set_font("Arial", size=10)
-    pdf.multi_cell(0, 10, summary)
-
-    pdf.add_page()
-    pdf.set_font("Arial", size=10)
-    
-    # Dynamically set column headers and widths based on dataframe columns
-    headers = df.columns.tolist()
-    col_widths = [max(len(str(col)), 30) for col in headers]  # Adjust widths based on column name length
-    
-    # Add headers
-    for header in headers:
-        pdf.cell(col_widths[headers.index(header)], 10, header, 1)
-    pdf.ln()
-
-    # Add rows
-    for _, row in df.iterrows():
-        values = [str(row.get(col, "")) for col in headers]
-        for i, value in enumerate(values):
-            pdf.cell(col_widths[i], 10, value, 1)
-        pdf.ln()
-
-    output = io.BytesIO()
-    pdf_output = pdf.output(dest='S').encode('latin-1')
-    output.write(pdf_output)
-    output.seek(0)
-    return output
-
-@app.get("/")
-def root():
-    return {"message": "AI Salary Tool is live."}
+        logging.error(f"Error in generating summary: {e}")
+        return "Error in generating summary."
 
 @app.post("/download-report")
-async def download_report(file: UploadFile = File(...), selected_columns: list = ["Department", "Previous Salary", "Current Salary", "Bonus"]):
+async def download_report(file: UploadFile = File(...), selected_columns: list = None):
     try:
-        contents = await file.read()  # Ensure file is read as a byte object
-        df = pd.read_excel(io.BytesIO(contents))
+        # Read the uploaded file as binary stream
+        file_content = await file.read()
+        
+        # Create a buffer to read the Excel file
+        df = pd.read_excel(io.BytesIO(file_content))
+        
+        # If no columns are selected, return an error
+        if not selected_columns:
+            raise HTTPException(status_code=400, detail="Please provide the selected columns.")
 
-        required_columns = ["Employee ID", "Name", "Department", "Previous Salary", "Current Salary"]
-        for col in required_columns:
-            if col not in df.columns:
-                raise ValueError(f"Missing required column: {col}")
-
-        df["Bonus"] = df.get("Bonus", 0)
-        df["Previous Salary"] = pd.to_numeric(df["Previous Salary"], errors='coerce').fillna(0)
-        df["Current Salary"] = pd.to_numeric(df["Current Salary"], errors='coerce').fillna(0)
-        df["Bonus"] = pd.to_numeric(df["Bonus"], errors='coerce').fillna(0)
-
+        # Generate the summary using the columns provided
         summary = generate_summary(df, selected_columns)
-        pdf = create_pdf(summary, df)
-
-        return StreamingResponse(pdf, media_type="application/pdf", headers={
-            "Content-Disposition": f"attachment; filename=salary_report_{datetime.now().strftime('%Y%m%d')}.pdf"
-        })
-
+        
+        # Create a PDF to include the summary and data
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", size=12)
+        pdf.cell(200, 10, txt="Generated Report", ln=True, align="C")
+        pdf.ln(10)
+        pdf.multi_cell(0, 10, txt=summary)
+        
+        # Save the PDF to a buffer
+        pdf_output = io.BytesIO()
+        pdf.output(pdf_output)
+        pdf_output.seek(0)
+        
+        # Send the PDF as a response
+        return StreamingResponse(pdf_output, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=report.pdf"})
+    
     except Exception as e:
-        logging.error(f"Error processing request: {e}")
-        return Response(content=f"500 Internal Server Error\n\n{str(e)}", status_code=500)
+        logging.error(f"Error processing file: {e}")
+        raise HTTPException(status_code=500, detail="An error occurred while processing the file.")
