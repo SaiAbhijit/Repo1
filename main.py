@@ -9,12 +9,13 @@ from datetime import datetime
 import openai
 import logging
 
-# Set up logging (add this near the start of your script)
+# Set up logging for debugging and error handling
 logging.basicConfig(level=logging.INFO)
-openai.api_key = os.getenv("OPENAI_API_KEY")
+openai.api_key = os.getenv("OPENAI_API_KEY")  # Make sure the API key is set correctly
 
 app = FastAPI()
 
+# CORS middleware to allow cross-origin requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,6 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Function to generate a summary using OpenAI's GPT-4 model
 def generate_summary(df, selected_columns):
     try:
         # Ensure 'Department' is included for grouping if it's not in selected_columns
@@ -73,6 +75,7 @@ def generate_summary(df, selected_columns):
 
         return "".join(fallback_summary_lines)
 
+# Function to create PDF report from the summary and dataframe
 def create_pdf(summary: str, df: pd.DataFrame):
     pdf = FPDF()
     pdf.add_page()
