@@ -23,27 +23,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def generate_summary(df):
+def generate_summary(df, selected_columns):
     try:
-        prompt = "You are an HR analyst. Analyze the following salary data:\n\n"
-        summary_table = df[["Department", "Previous Salary", "Current Salary", "Bonus"]].groupby("Department").sum().reset_index()
-        prompt += summary_table.to_string(index=False)
-        prompt += "\n\nWrite a concise, insightful summary highlighting trends and changes in less than 100 words. Include observations on total salary, bonus variations, and department-level differences."
-
+        # Ensure 'Department' is included for grouping if it's not in selected_columns
+        if "Department" not in selected_columns:
+            selected_columns = ["Department"] + selected_columns
+        
+        summary_table = df[selected_columns].groupby("Department").sum().reset_index()
+        
+        prompt = (
+            "You are an HR data analyst. ONLY analyze the data given below.\n"
+            "Do not invent or assume anything outside of the data shown.\n"
+            f"Columns provided: {', '.join(selected_columns)}\n\n"
+            + summary_table.to_string(index=False) +
+            "\n\nWrite a clear and concise summary under 100 words. Highlight department-wise changes and total values if relevant."
+        )
+        
         if openai.api_key:
-            logging.info("Using OpenAI for AI-generated summary.")  # Add this log to confirm API call
+            logging.info("Using OpenAI for AI-generated summary.")
             response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
+                model="gpt-4-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a precise HR analyst. Never invent information."},
+                    {"role": "user", "content": prompt}
+                ],
                 max_tokens=300
             )
-            logging.info("AI summary generated successfully.")  # Confirmation of successful AI summary generation
+            logging.info("AI summary generated successfully.")
             return response.choices[0].message.content.strip()
         else:
-            logging.warning(" OpenAI API key not set.")  # Log if API key is not set
+            logging.warning("OpenAI API key not set.")
             raise ValueError("OpenAI API key not set.")
     except Exception as e:
-        logging.error(f"Error generating AI summary: {e}")  # Log the error if something goes wrong
+        logging.error(f"Error generating AI summary: {e}")
         # Fallback logic in case of error
         fallback_summary_lines = []
         overall_change = df["Current Salary"].sum() - df["Previous Salary"].sum()
@@ -71,22 +83,19 @@ def create_pdf(summary: str, df: pd.DataFrame):
 
     pdf.add_page()
     pdf.set_font("Arial", size=10)
-    col_widths = [30, 40, 40, 30, 30, 30]
-    headers = ["Employee ID", "Name", "Department", "Previous Salary", "Current Salary", "Bonus"]
-
-    for i, header in enumerate(headers):
-        pdf.cell(col_widths[i], 10, header, 1)
+    
+    # Dynamically set column headers and widths based on dataframe columns
+    headers = df.columns.tolist()
+    col_widths = [max(len(str(col)), 30) for col in headers]  # Adjust widths based on column name length
+    
+    # Add headers
+    for header in headers:
+        pdf.cell(col_widths[headers.index(header)], 10, header, 1)
     pdf.ln()
 
+    # Add rows
     for _, row in df.iterrows():
-        values = [
-            str(row.get("Employee ID", "")),
-            str(row.get("Name", "")),
-            str(row.get("Department", "")),
-            f"Rs {row.get('Previous Salary', 0):,.2f}",
-            f"Rs {row.get('Current Salary', 0):,.2f}",
-            f"Rs {row.get('Bonus', 0):,.2f}"
-        ]
+        values = [str(row.get(col, "")) for col in headers]
         for i, value in enumerate(values):
             pdf.cell(col_widths[i], 10, value, 1)
         pdf.ln()
@@ -102,7 +111,7 @@ def root():
     return {"message": "AI Salary Tool is live."}
 
 @app.post("/download-report")
-def download_report(file: UploadFile = File(...)):
+def download_report(file: UploadFile = File(...), selected_columns: list = ["Department", "Previous Salary", "Current Salary", "Bonus"]):
     try:
         contents = file.file.read()
         df = pd.read_excel(io.BytesIO(contents))
@@ -117,7 +126,7 @@ def download_report(file: UploadFile = File(...)):
         df["Current Salary"] = pd.to_numeric(df["Current Salary"], errors='coerce').fillna(0)
         df["Bonus"] = pd.to_numeric(df["Bonus"], errors='coerce').fillna(0)
 
-        summary = generate_summary(df)
+        summary = generate_summary(df, selected_columns)
         pdf = create_pdf(summary, df)
 
         return StreamingResponse(pdf, media_type="application/pdf", headers={
@@ -128,3 +137,4 @@ def download_report(file: UploadFile = File(...)):
         import logging
         logging.error(f"Error processing request: {e}")
         return Response(content=f"500 Internal Server Error\n\n{str(e)}", status_code=500)
+
