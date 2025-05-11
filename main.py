@@ -2,10 +2,8 @@
 import pandas as pd
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
-import uvicorn
 import io
 from typing import List, Optional
-from datetime import datetime
 
 app = FastAPI(title="HR Variance Analyzer API")
 
@@ -118,7 +116,3 @@ def get_variance(employee_id: str, period1: str, period2: str):
     variance = compute_variance(data[period2], data[period1])
     summary = generate_summary_from_variance(variance)
     return {"employee_id": employee_id, "variance": variance, "summary": summary}
-
-# Run the API
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
